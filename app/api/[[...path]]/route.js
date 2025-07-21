@@ -24,6 +24,61 @@ function handleCORS(response) {
   return response
 }
 
+// Payroll calculation logic
+function calculatePayrollForEmployee(employee, workingDays = 22) {
+  const baseSalary = employee.baseSalary || 0
+  const allowances = employee.allowances || {}
+  const deductions = employee.deductions || {}
+  
+  // Calculate total allowances
+  const totalAllowances = (allowances.housing || 0) + 
+                          (allowances.transport || 0) + 
+                          (allowances.medical || 0)
+  
+  // Calculate gross salary
+  const grossSalary = baseSalary + totalAllowances
+  
+  // Calculate taxes (simplified - 15% on gross above $5000, 10% below)
+  let taxAmount = 0
+  if (grossSalary > 5000) {
+    taxAmount = grossSalary * 0.15
+  } else {
+    taxAmount = grossSalary * 0.10
+  }
+  
+  // Add manual deductions
+  const manualDeductions = (deductions.tax || 0) + 
+                          (deductions.insurance || 0) + 
+                          (deductions.loan || 0)
+  
+  const totalDeductions = taxAmount + manualDeductions
+  
+  // Calculate net salary
+  const netSalary = grossSalary - totalDeductions
+  
+  return {
+    baseSalary,
+    totalAllowances,
+    grossSalary,
+    taxAmount,
+    totalDeductions,
+    netSalary,
+    breakdown: {
+      allowances: {
+        housing: allowances.housing || 0,
+        transport: allowances.transport || 0,
+        medical: allowances.medical || 0
+      },
+      deductions: {
+        tax: taxAmount,
+        insurance: deductions.insurance || 0,
+        loan: deductions.loan || 0,
+        customTax: deductions.tax || 0
+      }
+    }
+  }
+}
+
 // OPTIONS handler for CORS
 export async function OPTIONS() {
   return handleCORS(new NextResponse(null, { status: 200 }))
@@ -38,47 +93,183 @@ async function handleRoute(request, { params }) {
   try {
     const db = await connectToMongo()
 
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
-    if (route === '/root' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
-    }
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
+    // Root endpoint
     if (route === '/' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
+      return handleCORS(NextResponse.json({ message: "PayTrack API v1.0" }))
     }
 
-    // Status endpoints - POST /api/status
-    if (route === '/status' && method === 'POST') {
+    // Employee endpoints
+    if (route === '/employees' && method === 'GET') {
+      const employees = await db.collection('employees').find({}).toArray()
+      const cleanedEmployees = employees.map(({ _id, ...rest }) => rest)
+      return handleCORS(NextResponse.json(cleanedEmployees))
+    }
+
+    if (route === '/employees' && method === 'POST') {
       const body = await request.json()
       
-      if (!body.client_name) {
+      const employee = {
+        id: uuidv4(),
+        name: body.name,
+        email: body.email,
+        position: body.position,
+        department: body.department,
+        baseSalary: body.baseSalary,
+        allowances: body.allowances,
+        deductions: body.deductions,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        status: 'active'
+      }
+
+      await db.collection('employees').insertOne(employee)
+      const { _id, ...cleanEmployee } = employee
+      return handleCORS(NextResponse.json(cleanEmployee))
+    }
+
+    // Get employee by ID
+    if (route.startsWith('/employees/') && method === 'GET') {
+      const employeeId = route.split('/')[2]
+      const employee = await db.collection('employees').findOne({ id: employeeId })
+      
+      if (!employee) {
         return handleCORS(NextResponse.json(
-          { error: "client_name is required" }, 
+          { error: "Employee not found" }, 
+          { status: 404 }
+        ))
+      }
+
+      const { _id, ...cleanEmployee } = employee
+      return handleCORS(NextResponse.json(cleanEmployee))
+    }
+
+    // Payroll calculation endpoint
+    if (route === '/payroll/calculate' && method === 'POST') {
+      const body = await request.json()
+      const { employeeId, period } = body
+
+      // Get employee details
+      const employee = await db.collection('employees').findOne({ id: employeeId })
+      if (!employee) {
+        return handleCORS(NextResponse.json(
+          { error: "Employee not found" }, 
+          { status: 404 }
+        ))
+      }
+
+      // Check if payroll already exists for this period
+      const existingPayroll = await db.collection('payroll_records').findOne({
+        employeeId,
+        period
+      })
+
+      if (existingPayroll) {
+        return handleCORS(NextResponse.json(
+          { error: "Payroll already calculated for this period" }, 
           { status: 400 }
         ))
       }
 
-      const statusObj = {
+      // Calculate payroll
+      const payrollCalculation = calculatePayrollForEmployee(employee)
+      
+      const payrollRecord = {
         id: uuidv4(),
-        client_name: body.client_name,
-        timestamp: new Date()
+        employeeId,
+        employeeName: employee.name,
+        period,
+        ...payrollCalculation,
+        createdAt: new Date(),
+        status: 'calculated'
       }
 
-      await db.collection('status_checks').insertOne(statusObj)
-      return handleCORS(NextResponse.json(statusObj))
+      await db.collection('payroll_records').insertOne(payrollRecord)
+      const { _id, ...cleanRecord } = payrollRecord
+      return handleCORS(NextResponse.json(cleanRecord))
     }
 
-    // Status endpoints - GET /api/status
-    if (route === '/status' && method === 'GET') {
-      const statusChecks = await db.collection('status_checks')
-        .find({})
-        .limit(1000)
-        .toArray()
-
-      // Remove MongoDB's _id field from response
-      const cleanedStatusChecks = statusChecks.map(({ _id, ...rest }) => rest)
+    // Get payroll records
+    if (route === '/payroll' && method === 'GET') {
+      const url = new URL(request.url)
+      const period = url.searchParams.get('period')
       
-      return handleCORS(NextResponse.json(cleanedStatusChecks))
+      let query = {}
+      if (period) {
+        query.period = period
+      }
+
+      const payrollRecords = await db.collection('payroll_records')
+        .find(query)
+        .sort({ createdAt: -1 })
+        .toArray()
+      
+      const cleanedRecords = payrollRecords.map(({ _id, ...rest }) => rest)
+      return handleCORS(NextResponse.json(cleanedRecords))
+    }
+
+    // Get payroll by employee
+    if (route.startsWith('/payroll/employee/') && method === 'GET') {
+      const employeeId = route.split('/')[3]
+      const payrollRecords = await db.collection('payroll_records')
+        .find({ employeeId })
+        .sort({ createdAt: -1 })
+        .toArray()
+      
+      const cleanedRecords = payrollRecords.map(({ _id, ...rest }) => rest)
+      return handleCORS(NextResponse.json(cleanedRecords))
+    }
+
+    // Dashboard stats
+    if (route === '/dashboard/stats' && method === 'GET') {
+      const employeeCount = await db.collection('employees').countDocuments()
+      const payrollRecords = await db.collection('payroll_records').find({}).toArray()
+      
+      const totalPayroll = payrollRecords.reduce((sum, record) => sum + (record.netSalary || 0), 0)
+      const avgSalary = payrollRecords.length > 0 ? totalPayroll / payrollRecords.length : 0
+      
+      const stats = {
+        totalEmployees: employeeCount,
+        totalPayroll,
+        avgSalary,
+        processedRecords: payrollRecords.length
+      }
+      
+      return handleCORS(NextResponse.json(stats))
+    }
+
+    // Department analysis
+    if (route === '/analytics/departments' && method === 'GET') {
+      const employees = await db.collection('employees').find({}).toArray()
+      const payrollRecords = await db.collection('payroll_records').find({}).toArray()
+      
+      const departmentData = {}
+      
+      employees.forEach(emp => {
+        if (!departmentData[emp.department]) {
+          departmentData[emp.department] = {
+            department: emp.department,
+            employeeCount: 0,
+            totalSalary: 0,
+            avgSalary: 0
+          }
+        }
+        departmentData[emp.department].employeeCount++
+        
+        // Find payroll for this employee
+        const empPayroll = payrollRecords.filter(p => p.employeeId === emp.id)
+        if (empPayroll.length > 0) {
+          const latestPayroll = empPayroll.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
+          departmentData[emp.department].totalSalary += latestPayroll.netSalary || 0
+        }
+      })
+      
+      // Calculate averages
+      Object.keys(departmentData).forEach(dept => {
+        const data = departmentData[dept]
+        data.avgSalary = data.employeeCount > 0 ? data.totalSalary / data.employeeCount : 0
+      })
+      
+      return handleCORS(NextResponse.json(Object.values(departmentData)))
     }
 
     // Route not found
@@ -90,7 +281,7 @@ async function handleRoute(request, { params }) {
   } catch (error) {
     console.error('API Error:', error)
     return handleCORS(NextResponse.json(
-      { error: "Internal server error" }, 
+      { error: "Internal server error", details: error.message }, 
       { status: 500 }
     ))
   }

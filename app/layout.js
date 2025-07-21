@@ -1,14 +1,14 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'Next.js MongoDB Template',
-  description: 'A simple template with App Router, MongoDB, and shadcn/ui',
+  title: 'PayTrack - Intelligent Payroll Management',
+  description: 'Modern payroll management system for SMEs and HR departments',
 }
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body>
+      <body className="bg-background text-foreground">
         {children}
       </body>
     </html>
