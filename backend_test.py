@@ -155,6 +155,7 @@ class PayTrackAPITester:
     
     def test_get_payroll_records(self, period_filter=None):
         """Test retrieving payroll records with optional period filter"""
+        filter_text = f" (filtered by {period_filter})" if period_filter else ""
         try:
             url = f"{self.base_url}/payroll"
             if period_filter:
@@ -164,7 +165,6 @@ class PayTrackAPITester:
             if response.status_code == 200:
                 data = response.json()
                 if isinstance(data, list):
-                    filter_text = f" (filtered by {period_filter})" if period_filter else ""
                     self.log_test(f"Get Payroll Records{filter_text}", True, 
                                 f"Found {len(data)} records")
                     return data
