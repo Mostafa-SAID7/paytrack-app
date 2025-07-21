@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Get base URL from environment
-BASE_URL = os.getenv('NEXT_PUBLIC_BASE_URL', 'https://4fb24cdf-45ec-4964-89d5-592026c45881.preview.emergentagent.com')
+# Get base URL from environment - use localhost for testing
+BASE_URL = "http://localhost:3000"
 API_BASE = f"{BASE_URL}/api"
 
 class PayTrackAPITester:
